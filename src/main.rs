@@ -15,7 +15,7 @@ fn main() {
         peripherals.spi2,
         peripherals.pins.gpio19, peripherals.pins.gpio22, Option::<Gpio0>::None,
         Dma::Disabled, Some(peripherals.pins.gpio23),
-        &SpiConfig::new().baudrate(MegaHertz(10).into()).data_mode(embedded_hal::spi::MODE_0)
+        &SpiConfig::new().baudrate(KiloHertz(100).into()).data_mode(embedded_hal::spi::MODE_0)
     ).unwrap();
 
     let mut steppers = ShiftStepper::new(spi);
@@ -24,14 +24,16 @@ fn main() {
     loop {
         for _ in 0..240 {
             steppers.step_motor1(true).unwrap();
-            delay::FreeRtos::delay_ms(2);
+            steppers.step_motor2(false).unwrap();
+            delay::FreeRtos::delay_ms(10);
         }
 
         delay::FreeRtos::delay_ms(1000);
 
         for _ in 0..240 {
             steppers.step_motor1(false).unwrap();
-            delay::FreeRtos::delay_ms(2);
+            steppers.step_motor2(true).unwrap();
+            delay::FreeRtos::delay_ms(10);
         }
 
         delay::FreeRtos::delay_ms(1000);

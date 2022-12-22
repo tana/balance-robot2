@@ -1,16 +1,17 @@
 use embedded_hal::spi::{SpiDevice, SpiBusWrite};
 
 // Half-step sequence
-// (MSB) B- B+ A- A+ (LSB)
+// Due to a mistake of PCB design, a weird bit order is used.
+// (MSB) B- A- A+ B+ (LSB)
 const SEQUENCE: [u8; 8] = [
+    0b0010,
+    0b0011,
     0b0001,
     0b0101,
     0b0100,
-    0b0110,
-    0b0010,
-    0b1010,
+    0b1100,
     0b1000,
-    0b1001
+    0b1010
 ];
 
 pub struct ShiftStepper<SPI> {
