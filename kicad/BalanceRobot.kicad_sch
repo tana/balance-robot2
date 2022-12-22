@@ -1533,6 +1533,11 @@
     (uuid ff04fdab-495b-43b2-bf5a-358703e15991)
   )
 
+  (text "(Low ESR)" (at 106.68 92.71 0)
+    (effects (font (size 1.27 1.27)) (justify left bottom))
+    (uuid 774c284a-c917-4a6f-8fbd-add6b6ba41ff)
+  )
+
   (label "LATCH" (at 172.72 86.36 0)
     (effects (font (size 1.27 1.27)) (justify left bottom))
     (uuid 0cd720fa-5426-42ef-b4e1-3025f15401d6)
@@ -1745,7 +1750,7 @@
     (property "Reference" "C2" (id 0) (at 77.851 149.4063 0)
       (effects (font (size 1.27 1.27)) (justify left))
     )
-    (property "Value" "33u" (id 1) (at 77.851 151.9432 0)
+    (property "Value" "47u" (id 1) (at 77.851 151.9432 0)
       (effects (font (size 1.27 1.27)) (justify left))
     )
     (property "Footprint" "Capacitor_THT:CP_Radial_D5.0mm_P2.50mm" (id 2) (at 75.8952 154.94 0)
@@ -2264,7 +2269,7 @@
     (property "Reference" "C4" (id 0) (at 108.331 85.9063 0)
       (effects (font (size 1.27 1.27)) (justify left))
     )
-    (property "Value" "330u" (id 1) (at 108.331 88.4432 0)
+    (property "Value" "470u" (id 1) (at 108.331 88.4432 0)
       (effects (font (size 1.27 1.27)) (justify left))
     )
     (property "Footprint" "Capacitor_THT:CP_Radial_D8.0mm_P5.00mm" (id 2) (at 106.3752 91.44 0)
@@ -2357,7 +2362,7 @@
     (property "Reference" "C3" (id 0) (at 82.931 109.6553 0)
       (effects (font (size 1.27 1.27)) (justify left))
     )
-    (property "Value" "1u" (id 1) (at 82.931 112.1922 0)
+    (property "Value" "0.1u" (id 1) (at 82.931 112.1922 0)
       (effects (font (size 1.27 1.27)) (justify left))
     )
     (property "Footprint" "Capacitor_THT:C_Disc_D3.0mm_W1.6mm_P2.50mm" (id 2) (at 80.9752 114.3 0)
@@ -2464,13 +2469,13 @@
       (reference "C1") (unit 1) (value "0.1u") (footprint "Capacitor_THT:C_Disc_D3.0mm_W1.6mm_P2.50mm")
     )
     (path "/465896ee-e1d0-442e-8bde-8fac50910dfd"
-      (reference "C2") (unit 1) (value "33u") (footprint "Capacitor_THT:CP_Radial_D5.0mm_P2.50mm")
+      (reference "C2") (unit 1) (value "47u") (footprint "Capacitor_THT:CP_Radial_D5.0mm_P2.50mm")
     )
     (path "/e8656200-ac1c-4b4f-85dd-c2aaa0406e1e"
-      (reference "C3") (unit 1) (value "1u") (footprint "Capacitor_THT:C_Disc_D3.0mm_W1.6mm_P2.50mm")
+      (reference "C3") (unit 1) (value "0.1u") (footprint "Capacitor_THT:C_Disc_D3.0mm_W1.6mm_P2.50mm")
     )
     (path "/dd589c3e-1a73-40e3-b0dc-96c44ecf7431"
-      (reference "C4") (unit 1) (value "330u") (footprint "Capacitor_THT:CP_Radial_D8.0mm_P5.00mm")
+      (reference "C4") (unit 1) (value "470u") (footprint "Capacitor_THT:CP_Radial_D8.0mm_P5.00mm")
     )
     (path "/daee85e0-2341-48ca-a66d-285e2859aad2"
       (reference "C5") (unit 1) (value "0.1u") (footprint "Capacitor_THT:C_Disc_D3.0mm_W1.6mm_P2.50mm")
