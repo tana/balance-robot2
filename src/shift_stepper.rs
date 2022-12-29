@@ -27,7 +27,9 @@ const SEQUENCE: [u8; 8] = [
 pub struct ShiftStepper<SPI> {
     spi: SPI,
     motor1_phase: usize,
-    motor2_phase: usize
+    motor2_phase: usize,
+    motor1_active: bool,
+    motor2_active: bool
 }
 
 impl<SPI> ShiftStepper<SPI>
@@ -39,13 +41,17 @@ where
         Self {
             spi,
             motor1_phase: 0,
-            motor2_phase: 0
+            motor2_phase: 0,
+            motor1_active: false,
+            motor2_active: false
         }
     }
 
     pub fn init(&mut self) -> Result<(), SPI::Error> {
         self.motor1_phase = 0;
         self.motor2_phase = 0;
+        self.motor1_active = true;
+        self.motor2_active = true;
         
         self.send()
     }
@@ -65,9 +71,16 @@ where
         self.send()
     }
 
+    pub fn set_active(&mut self, motor1: bool, motor2: bool) -> Result<(), SPI::Error> {
+        self.motor1_active = motor1;
+        self.motor2_active = motor2;
+
+        self.send()
+    }
+
     fn send(&mut self) -> Result<(), SPI::Error> {
-        let motor1_bits = SEQUENCE[self.motor1_phase];
-        let motor2_bits = SEQUENCE[self.motor2_phase];
+        let motor1_bits = if self.motor1_active { SEQUENCE[self.motor1_phase] } else { 0 };
+        let motor2_bits = if self.motor2_active { SEQUENCE[self.motor2_phase] } else { 0 };
 
         self.spi.write(&[(motor2_bits << 4) | motor1_bits])
     }
@@ -162,6 +175,11 @@ impl<S, T> SpeedController<S, T> where
     pub fn set_speed(&mut self, motor1_steps_per_sec: f32, motor2_steps_per_sec: f32) {
         let mut increment = self.increment.lock().unwrap();
         *increment = (self.speed_to_increment(motor1_steps_per_sec), self.speed_to_increment(motor2_steps_per_sec));
+    }
+
+    pub fn set_active(&mut self, motor1: bool, motor2: bool) {
+        let mut steppers = self.steppers.lock().unwrap();
+        steppers.set_active(motor1, motor2).unwrap();
     }
 
     fn speed_to_increment(&self, steps_per_sec: f32) -> i32 {
