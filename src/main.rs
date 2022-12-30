@@ -64,6 +64,7 @@ fn main() {
     // For control
     let dt = CONTROL_PERIOD.as_secs_f32();
     let mut motor_ang_vel = 0.0;    // radians per sec
+    let mut prev_angle = 0.0;
     let control_gain = matrix![-97.42137788, -20.48627806, -3.16227766];    // LQR
 
     let mut last_time = std::time::Instant::now();
@@ -80,8 +81,9 @@ fn main() {
         let accel = imu.get_acc().unwrap();
         let gyro = imu.get_gyro().unwrap();
         let accel_angle = -accel.y.atan2(-accel.z);   // Becomes 0 when a display is facing up
-        let ang_vel = gyro.x;
-        let angle = filter.filter(accel_angle, ang_vel);
+        let angle = filter.filter(accel_angle, gyro.x);
+        let ang_vel = (angle - prev_angle) / dt;
+        prev_angle = angle;
 
         let state = vector![angle, ang_vel, motor_ang_vel];
 
