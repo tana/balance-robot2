@@ -24,6 +24,8 @@ fn main() {
     
     let button = PinDriver::input(peripherals.pins.gpio39).unwrap();
 
+    let mut debug_pin = PinDriver::output(peripherals.pins.gpio33).unwrap();
+
     // Initialize I2C for IMU
     let i2c = I2cDriver::new(
         peripherals.i2c0,
@@ -92,6 +94,8 @@ fn main() {
 
         let steps_per_sec = STEPS_PER_ROTATION * motor_ang_vel / (2.0 * core::f32::consts::PI);
         speed_controller.set_speed(-steps_per_sec, steps_per_sec);
+
+        debug_pin.toggle().unwrap();
 
         std::thread::sleep(CONTROL_PERIOD - last_time.elapsed());
         last_time = std::time::Instant::now();
