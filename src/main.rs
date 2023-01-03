@@ -13,6 +13,7 @@ mod complementary_filter;
 const CONTROL_PERIOD: Duration = Duration::from_millis(10);
 const STEPS_PER_ROTATION: f32 = shift_stepper::STEP_DIV as f32 * 120.0;
 const MAX_MOTOR_ANG_VEL: f32 = 4.0 * core::f32::consts::PI;
+const FALL_ANGLE: f32 = 45.0 * core::f32::consts::PI / 180.0;
 
 fn main() {
     // Temporary. Will disappear once ESP-IDF 4.4 is released, but for now it is necessary to call this function once,
@@ -80,16 +81,18 @@ fn main() {
     let dt = CONTROL_PERIOD.as_secs_f32();
     let mut motor_ang_vel = 0.0;    // radians per sec
     let mut prev_angle = 0.0;
-    let control_gain = matrix![-97.42137788, -20.48627806, -3.16227766];    // LQR
+    let control_gain = matrix![-280.74261026, -89.66049857, -10.];    // LQR
 
     let mut last_time = std::time::Instant::now();
 
     loop {
         let pressed = button.is_low();
         if !prev_pressed && pressed {   // Detect button press
-            println!("Button pressed");
             active = !active;
             speed_controller.set_active(active, active);
+
+            // Reset accumulating variables
+            motor_ang_vel = 0.0;
         }
         prev_pressed = pressed;
 
@@ -99,6 +102,12 @@ fn main() {
         let angle = filter.filter(accel_angle, gyro.x);
         let ang_vel = (angle - prev_angle) / dt;
         prev_angle = angle;
+
+        // Stop motors when fell
+        if angle.abs() >= FALL_ANGLE {
+            active = false;
+            speed_controller.set_active(active, active);
+        }
 
         let state = vector![angle, ang_vel, motor_ang_vel];
 
