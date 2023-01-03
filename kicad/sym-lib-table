@@ -1,0 +1,5 @@
+(sym_lib_table
+  (lib (name "lt1172")(type "KiCad")(uri "${KIPRJMOD}/symbols/lt1172.kicad_sym")(options "")(descr ""))
+  (lib (name "m5atom")(type "KiCad")(uri "${KIPRJMOD}/symbols/m5atom.kicad_sym")(options "")(descr ""))
+  (lib (name "tb67s158ng")(type "KiCad")(uri "${KIPRJMOD}/symbols/tb67s158ng.kicad_sym")(options "")(descr ""))
+)
