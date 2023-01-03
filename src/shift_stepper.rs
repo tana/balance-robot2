@@ -11,29 +11,37 @@ pub enum Direction {
     Backward
 }
 
-pub const STEP_DIV: usize = 8;
-const PWM_MAX: usize = 15;
+const STEP_DIV: usize = 4;
 
 // Generate microstepping sequence
 // Due to a mistake of PCB design, a weird order is used.
 // [B-, A-, A+, B+]
-fn generate_microstep_seq() -> [[usize; 4]; 4 * STEP_DIV] {
-    let steps = 4 * STEP_DIV;
-    let mut sequence: [[usize; 4]; 4 * STEP_DIV] = Default::default();
-    for i in 0..steps {
-        let angle = 2.0 * core::f32::consts::PI * (i as f32) / (steps as f32);
-        let (s, c) = angle.sin_cos();
-        let s_int = (PWM_MAX as f32 * (s + 1.0) / 2.0).round() as usize;
-        let c_int = (PWM_MAX as f32 * (c + 1.0) / 2.0).round() as usize;
-        sequence[i] = [PWM_MAX - s_int, PWM_MAX - c_int, c_int, s_int];
-    }
+fn generate_microstep_seq() -> [[usize; 4]; 4 * (STEP_DIV - 1)] {
+    let mut sequence: [[usize; 4]; 4 * (STEP_DIV - 1)] = Default::default();
+
+    // 0011 to 0101
+    sequence[0..(STEP_DIV - 1)].iter_mut().enumerate().for_each(|(i, pattern)| {
+        *pattern = [0, i, STEP_DIV - 1 - i, STEP_DIV - 1];
+    });
+    // 0101 to 1100
+    sequence[(STEP_DIV - 1)..(2 * (STEP_DIV - 1))].iter_mut().enumerate().for_each(|(i, pattern)| {
+        *pattern = [i, STEP_DIV - 1, 0, STEP_DIV - 1 - i];
+    });
+    // 1100 to 1010
+    sequence[(2 * (STEP_DIV - 1))..(3 * (STEP_DIV - 1))].iter_mut().enumerate().for_each(|(i, pattern)| {
+        *pattern = [STEP_DIV - 1, STEP_DIV - 1 - i, i, 0];
+    });
+    // 1010 to 0011
+    sequence[(3 * (STEP_DIV - 1))..(4 * (STEP_DIV - 1))].iter_mut().enumerate().for_each(|(i, pattern)| {
+        *pattern = [STEP_DIV - 1 - i, 0, STEP_DIV - 1, i];
+    });
 
     sequence
 }
 
 pub struct ShiftStepper where
 {
-    sequence: [[usize; 4]; 4 * STEP_DIV],
+    sequence: [[usize; 4]; 4 * (STEP_DIV - 1)],
     #[allow(dead_code)]
     join_handle: JoinHandle<()>,
     duty: Arc<Mutex<([usize; 4], [usize; 4])>>,
@@ -50,8 +58,6 @@ impl ShiftStepper where
         Spi::Bus: SpiBusWrite,
     {
         let duty = Arc::new(Mutex::new(([0, 0, 0, 0], [0, 0, 0, 0])));
-
-        let prev_thread_conf = ThreadSpawnConfiguration::get().unwrap_or_default();
 
         let join_handle = {
             let duty = Arc::clone(&duty);
@@ -71,24 +77,21 @@ impl ShiftStepper where
                         *lock
                     };
 
-                    for pwm_count in 0..=PWM_MAX {
+                    for pwm_count in 0..=STEP_DIV {
                         let motor1_bits: u8 = motor1_duty.iter()
-                            .enumerate().map(|(i, d)| if pwm_count < *d { 1 << (3 - i) } else { 0 })
+                            .enumerate().map(|(i, d)| if pwm_count < *d { 1 << i } else { 0 })
                             .sum();
                         let motor2_bits: u8 = motor2_duty.iter()
-                            .enumerate().map(|(i, d)| if pwm_count < *d { 1 << (3 - i) } else { 0 })
+                            .enumerate().map(|(i, d)| if pwm_count < *d { 1 << i } else { 0 })
                             .sum();
 
                         spi.write(&[(motor2_bits << 4) | motor1_bits]).unwrap();
 
-                        esp_idf_hal::delay::Ets::delay_us(10);
+                        esp_idf_hal::delay::Ets::delay_us(100);
                     }
                 }
             })
         };
-
-        // Restore spawn configuration
-        prev_thread_conf.set().unwrap();
 
         Self {
             sequence: generate_microstep_seq(),
@@ -159,7 +162,7 @@ pub struct SpeedController<TimerService> where
     timer_period: f32
 }
 
-const COUNTER_MAX: i32 = 10000;
+const COUNTER_MAX: i32 = 1000;
 
 impl<TimerService> SpeedController<TimerService> where
     TimerService: embedded_svc::timer::TimerService + 'static,

@@ -11,7 +11,7 @@ mod shift_stepper;
 mod complementary_filter;
 
 const CONTROL_PERIOD: Duration = Duration::from_millis(10);
-const STEPS_PER_ROTATION: f32 = shift_stepper::STEP_DIV as f32 * 120.0;
+const STEPS_PER_ROTATION: f32 = 8.0 * 120.0;
 const MAX_MOTOR_ANG_VEL: f32 = 4.0 * core::f32::consts::PI;
 const FALL_ANGLE: f32 = 45.0 * core::f32::consts::PI / 180.0;
 
