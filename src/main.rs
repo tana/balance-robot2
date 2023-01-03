@@ -11,7 +11,7 @@ mod shift_stepper;
 mod complementary_filter;
 
 const CONTROL_PERIOD: Duration = Duration::from_millis(10);
-const STEPS_PER_ROTATION: f32 = 8.0 * 120.0;
+const STEPS_PER_ROTATION: f32 = 240.0;
 const MAX_MOTOR_ANG_VEL: f32 = 4.0 * core::f32::consts::PI;
 const FALL_ANGLE: f32 = 45.0 * core::f32::consts::PI / 180.0;
 
@@ -22,18 +22,6 @@ fn main() {
 
     let peripherals = Peripherals::take().unwrap();
     let mut delay = esp_idf_hal::delay::FreeRtos;
-
-    // Prevent Task WDT from watching IDLE on Core 1 because it is dedicated to microstepping
-    // TODO: use safe API of newer esp_idf_hal
-    let wdt_config = esp_idf_sys::esp_task_wdt_config_t {
-        timeout_ms: 5000,
-        idle_core_mask: 0b01,   // Core 0 only
-        trigger_panic: true
-    };
-    unsafe {
-        esp_idf_sys::esp!(esp_idf_sys::esp_task_wdt_deinit()).unwrap();
-        esp_idf_sys::esp!(esp_idf_sys::esp_task_wdt_init(&wdt_config)).unwrap();
-    }
     
     let button = PinDriver::input(peripherals.pins.gpio39).unwrap();
 
@@ -55,17 +43,16 @@ fn main() {
         peripherals.spi2,
         peripherals.pins.gpio19, peripherals.pins.gpio22, Option::<Gpio0>::None,
         Dma::Disabled, Some(peripherals.pins.gpio23),
-        &SpiConfig::new().baudrate(1.MHz().into()).data_mode(embedded_hal::spi::MODE_0)
+        &SpiConfig::new().baudrate(100.kHz().into()).data_mode(embedded_hal::spi::MODE_0)
     ).unwrap();
-
-    let mut timer_service = EspTimerService::new().unwrap();
 
     // Initialize stepper driver
     let mut steppers = ShiftStepper::new(spi);
-    steppers.init();
-    steppers.set_active(false, false);
+    steppers.init().unwrap();
+    steppers.set_active(false, false).unwrap();
 
     // Initialize speed control for steppers
+    let mut timer_service = EspTimerService::new().unwrap();
     let mut speed_controller = SpeedController::new(
         steppers, &mut timer_service, 0.001
     ).unwrap();

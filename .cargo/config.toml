@@ -8,17 +8,17 @@ target = "xtensa-esp32-espidf"
 [target.xtensa-esp32-espidf]
 linker = "ldproxy"
 runner = "espflash --speed=1500000 --monitor"
-rustflags = ["--cfg", "espidf_time64"] # Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
+#rustflags = ["--cfg", "espidf_time64"] # Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
 
 [target.xtensa-esp32s2-espidf]
 linker = "ldproxy"
 runner = "espflash --monitor"
-rustflags = ["--cfg", "espidf_time64"] # Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
+#rustflags = ["--cfg", "espidf_time64"] # Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
 
 [target.xtensa-esp32s3-espidf]
 linker = "ldproxy"
 runner = "espflash --monitor"
-rustflags = ["--cfg", "espidf_time64"] # Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
+#rustflags = ["--cfg", "espidf_time64"] # Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
 
 [target.riscv32imc-esp-espidf]
 linker = "ldproxy"
@@ -34,7 +34,7 @@ build-std = ["std", "panic_abort"]
 
 [env]
 # Note: these variables are not used when using pio builder (`cargo build --features pio`)
-# Builds against ESP-IDF stable (v5.0)
-ESP_IDF_VERSION = "release/v5.0"
+# Builds against ESP-IDF stable (v4.4)
+ESP_IDF_VERSION = "release/v4.4"
 # Builds against ESP-IDF master (mainline)
 #ESP_IDF_VERSION = "master"

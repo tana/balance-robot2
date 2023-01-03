@@ -1,7 +1,6 @@
-use std::{sync::{Mutex, Arc}, thread::JoinHandle};
+use std::sync::{Mutex, Arc};
 use embedded_hal::spi::{SpiDevice, SpiBusWrite};
-use embedded_svc::timer::PeriodicTimer;
-use esp_idf_hal::task::thread::ThreadSpawnConfiguration;
+use embedded_svc::timer::{TimerService, PeriodicTimer};
 
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub enum Direction {
@@ -11,92 +10,36 @@ pub enum Direction {
     Backward
 }
 
-const STEP_DIV: usize = 4;
+// Half-step sequence
+// Due to a mistake of PCB design, a weird bit order is used.
+// (MSB) B- A- A+ B+ (LSB)
+const SEQUENCE: [u8; 8] = [
+    0b0010,
+    0b0011,
+    0b0001,
+    0b0101,
+    0b0100,
+    0b1100,
+    0b1000,
+    0b1010
+];
 
-// Generate microstepping sequence
-// Due to a mistake of PCB design, a weird order is used.
-// [B-, A-, A+, B+]
-fn generate_microstep_seq() -> [[usize; 4]; 4 * (STEP_DIV - 1)] {
-    let mut sequence: [[usize; 4]; 4 * (STEP_DIV - 1)] = Default::default();
-
-    // 0011 to 0101
-    sequence[0..(STEP_DIV - 1)].iter_mut().enumerate().for_each(|(i, pattern)| {
-        *pattern = [0, i, STEP_DIV - 1 - i, STEP_DIV - 1];
-    });
-    // 0101 to 1100
-    sequence[(STEP_DIV - 1)..(2 * (STEP_DIV - 1))].iter_mut().enumerate().for_each(|(i, pattern)| {
-        *pattern = [i, STEP_DIV - 1, 0, STEP_DIV - 1 - i];
-    });
-    // 1100 to 1010
-    sequence[(2 * (STEP_DIV - 1))..(3 * (STEP_DIV - 1))].iter_mut().enumerate().for_each(|(i, pattern)| {
-        *pattern = [STEP_DIV - 1, STEP_DIV - 1 - i, i, 0];
-    });
-    // 1010 to 0011
-    sequence[(3 * (STEP_DIV - 1))..(4 * (STEP_DIV - 1))].iter_mut().enumerate().for_each(|(i, pattern)| {
-        *pattern = [STEP_DIV - 1 - i, 0, STEP_DIV - 1, i];
-    });
-
-    sequence
-}
-
-pub struct ShiftStepper where
-{
-    sequence: [[usize; 4]; 4 * (STEP_DIV - 1)],
-    #[allow(dead_code)]
-    join_handle: JoinHandle<()>,
-    duty: Arc<Mutex<([usize; 4], [usize; 4])>>,
+pub struct ShiftStepper<SPI> {
+    spi: SPI,
     motor1_phase: usize,
     motor2_phase: usize,
     motor1_active: bool,
     motor2_active: bool
 }
 
-impl ShiftStepper where
+impl<SPI> ShiftStepper<SPI>
+where
+    SPI: SpiDevice,
+    SPI::Bus: SpiBusWrite
 {
-    pub fn new<Spi>(mut spi: Spi) -> Self where
-        Spi: SpiDevice + Send + 'static,
-        Spi::Bus: SpiBusWrite,
-    {
-        let duty = Arc::new(Mutex::new(([0, 0, 0, 0], [0, 0, 0, 0])));
-
-        let join_handle = {
-            let duty = Arc::clone(&duty);
-
-            // The thread runs in Core 1 (APP_CPU)
-            let mut thread_conf = ThreadSpawnConfiguration::default();
-            thread_conf.name = Some("PWM".as_bytes());
-            thread_conf.pin_to_core = Some(esp_idf_hal::cpu::Core::Core1);
-            thread_conf.priority = 10;
-            thread_conf.set().unwrap();
-
-            // PWM in another thread
-            std::thread::spawn(move || {
-                loop {
-                    let (motor1_duty, motor2_duty) = {
-                        let lock = duty.lock().unwrap();
-                        *lock
-                    };
-
-                    for pwm_count in 0..=STEP_DIV {
-                        let motor1_bits: u8 = motor1_duty.iter()
-                            .enumerate().map(|(i, d)| if pwm_count < *d { 1 << i } else { 0 })
-                            .sum();
-                        let motor2_bits: u8 = motor2_duty.iter()
-                            .enumerate().map(|(i, d)| if pwm_count < *d { 1 << i } else { 0 })
-                            .sum();
-
-                        spi.write(&[(motor2_bits << 4) | motor1_bits]).unwrap();
-
-                        esp_idf_hal::delay::Ets::delay_us(100);
-                    }
-                }
-            })
-        };
-
+    pub fn new(spi: SPI) -> Self {
         Self {
-            sequence: generate_microstep_seq(),
-            join_handle,
-            duty,
+            spi,
             motor1_phase: 0,
             motor2_phase: 0,
             motor1_active: false,
@@ -104,71 +47,76 @@ impl ShiftStepper where
         }
     }
 
-    pub fn init(&mut self) {
+    pub fn init(&mut self) -> Result<(), SPI::Error> {
         self.motor1_phase = 0;
         self.motor2_phase = 0;
         self.motor1_active = true;
         self.motor2_active = true;
-
-        self.step(Direction::Still, Direction::Still)
+        
+        self.send()
     }
 
-    pub fn step(&mut self, motor1_dir: Direction, motor2_dir: Direction) {
+    pub fn step(&mut self, motor1_dir: Direction, motor2_dir: Direction) -> Result<(), SPI::Error> {
         self.motor1_phase = match motor1_dir {
             Direction::Still => self.motor1_phase,
-            Direction::Forward => update_phase(self.sequence.len(), self.motor1_phase, true),
-            Direction::Backward => update_phase(self.sequence.len(), self.motor1_phase, false)
+            Direction::Forward => update_phase(self.motor1_phase, true),
+            Direction::Backward => update_phase(self.motor1_phase, false)
         };
         self.motor2_phase = match motor2_dir {
             Direction::Still => self.motor2_phase,
-            Direction::Forward => update_phase(self.sequence.len(), self.motor2_phase, true),
-            Direction::Backward => update_phase(self.sequence.len(), self.motor2_phase, false)
+            Direction::Forward => update_phase(self.motor2_phase, true),
+            Direction::Backward => update_phase(self.motor2_phase, false)
         };
 
-        let motor1_duty = if self.motor1_active { self.sequence[self.motor1_phase] } else { [0, 0, 0, 0] };
-        let motor2_duty = if self.motor2_active { self.sequence[self.motor2_phase] } else { [0, 0, 0, 0] };
-
-        let mut lock = self.duty.lock().unwrap();
-        *lock = (motor1_duty, motor2_duty);
+        self.send()
     }
 
-    pub fn set_active(&mut self, motor1: bool, motor2: bool) {
+    pub fn set_active(&mut self, motor1: bool, motor2: bool) -> Result<(), SPI::Error> {
         self.motor1_active = motor1;
         self.motor2_active = motor2;
 
-        self.step(Direction::Still, Direction::Still)
+        self.send()
+    }
+
+    fn send(&mut self) -> Result<(), SPI::Error> {
+        let motor1_bits = if self.motor1_active { SEQUENCE[self.motor1_phase] } else { 0 };
+        let motor2_bits = if self.motor2_active { SEQUENCE[self.motor2_phase] } else { 0 };
+
+        self.spi.write(&[(motor2_bits << 4) | motor1_bits])
     }
 }
 
-fn update_phase(len: usize, phase: usize, forward: bool) -> usize {
+fn update_phase(phase: usize, forward: bool) -> usize {
     let next = if forward {
         phase as isize + 1
     } else {
         phase as isize - 1
     };
 
-    next.rem_euclid(len as isize) as usize
+    next.rem_euclid(SEQUENCE.len() as isize) as usize
 }
 
-pub struct SpeedController<TimerService> where
-    TimerService: embedded_svc::timer::TimerService,
-    ShiftStepper: Send
+pub struct SpeedController<S, T> where
+    S: SpiDevice,
+    S::Bus: SpiBusWrite,
+    T: TimerService
 {
     #[allow(dead_code)]
-    steppers: Arc<Mutex<ShiftStepper>>,
+    steppers: Arc<Mutex<ShiftStepper<S>>>,
     #[allow(dead_code)]
-    timer: TimerService::Timer,
+    timer: T::Timer,
     increment: Arc<Mutex<(i32, i32)>>,
     timer_period: f32
 }
 
 const COUNTER_MAX: i32 = 1000;
 
-impl<TimerService> SpeedController<TimerService> where
-    TimerService: embedded_svc::timer::TimerService + 'static,
-    ShiftStepper: Send
+impl<S, T> SpeedController<S, T> where
+    S: SpiDevice + Send + 'static,
+    S::Bus: SpiBusWrite,
+    T: TimerService
 {
-    pub fn new(steppers: ShiftStepper, timer_serice: &mut TimerService, timer_period: f32) -> Result<Self, TimerService::Error> {
+    pub fn new(steppers: ShiftStepper<S>, timer_serice: &mut T, timer_period: f32) -> Result<Self, T::Error> {
         let steppers = Arc::new(Mutex::new(steppers));
         let increment = Arc::new(Mutex::new((0i32, 0i32)));
 
@@ -209,7 +157,7 @@ impl<TimerService> SpeedController<TimerService> where
 
                 {
                     let mut steppers = steppers.lock().unwrap();
-                    steppers.step(motor1_dir, motor2_dir)
+                    steppers.step(motor1_dir, motor2_dir).unwrap();
                 }
             })?
         };
@@ -231,7 +179,7 @@ impl<TimerService> SpeedController<TimerService> where
 
     pub fn set_active(&mut self, motor1: bool, motor2: bool) {
         let mut steppers = self.steppers.lock().unwrap();
-        steppers.set_active(motor1, motor2)
+        steppers.set_active(motor1, motor2).unwrap();
     }
 
     fn speed_to_increment(&self, steps_per_sec: f32) -> i32 {
