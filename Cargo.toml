@@ -2,6 +2,7 @@
 name = "balance-robot2"
 version = "0.1.0"
 authors = ["Satoshi Tanaka <overthere555@gmail.com>"]
+license = "MIT"
 edition = "2021"
 resolver = "2"
 
