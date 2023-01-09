@@ -2,3 +2,5 @@
 /.embuild
 /target
 /Cargo.lock
+
+.ipynb_checkpoints

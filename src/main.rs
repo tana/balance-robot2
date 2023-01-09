@@ -20,6 +20,7 @@ const STEPS_PER_ROTATION: f32 = 240.0;
 const MAX_MOTOR_ANG_VEL: f32 = 4.0 * core::f32::consts::PI;
 const FALL_ANGLE: f32 = 45.0 * core::f32::consts::PI / 180.0;
 const TURN_RATE: f32 = 120.0 * core::f32::consts::PI / 180.0;
+const MAX_SPEED: f32 = 360.0 * core::f32::consts::PI / 180.0;
 
 fn main() {
     // Temporary. Will disappear once ESP-IDF 4.4 is released, but for now it is necessary to call this function once,
@@ -66,12 +67,14 @@ fn main() {
     mdns.set_instance_name("Self-Balancing Robot").unwrap();
 
     // Shared variables for remote control
+    let speed = Arc::<Mutex<f32>>::new(Mutex::new(0.0));
     let turn = Arc::<Mutex<f32>>::new(Mutex::new(0.0));
 
     // Handle OSC in another thread
     let _osc_thread_handle = {
+        let speed = Arc::clone(&speed);
         let turn = Arc::clone(&turn);
-        std::thread::spawn(move || osc_thread(turn))
+        std::thread::spawn(move || osc_thread(speed, turn))
     };
 
     // Run control loop in another core with higiher priority
@@ -83,13 +86,13 @@ fn main() {
     };
     spawn_config.set().unwrap();
     let control_thread_handle = std::thread::spawn(
-        move || control_thread(button, debug_pin, i2c, spi, turn)
+        move || control_thread(button, debug_pin, i2c, spi, speed, turn)
     );
 
     control_thread_handle.join().unwrap();
 }
 
-fn control_thread<ButtonPin, DebugPin, Spi>(button: ButtonPin, mut debug_pin: DebugPin, i2c: I2cDriver, spi: Spi, turn: Arc<Mutex<f32>>) where
+fn control_thread<ButtonPin, DebugPin, Spi>(button: ButtonPin, mut debug_pin: DebugPin, i2c: I2cDriver, spi: Spi, speed: Arc<Mutex<f32>>, turn: Arc<Mutex<f32>>) where
     ButtonPin: InputPin,
     DebugPin: ToggleableOutputPin,
     Spi: SpiDevice + Send + 'static,
@@ -124,6 +127,7 @@ fn control_thread<ButtonPin, DebugPin, Spi>(button: ButtonPin, mut debug_pin: De
     let mut motor_ang_vel = 0.0;    // radians per sec
     let mut prev_angle = 0.0;
     let control_gain = matrix![-280.74261026, -89.66049857, -10.];    // LQR
+    let ref_state_to_ref_input = matrix![-10.96347314, 0., 0.]; // pinv(B)A
 
     let mut last_time = std::time::Instant::now();
 
@@ -151,9 +155,15 @@ fn control_thread<ButtonPin, DebugPin, Spi>(button: ButtonPin, mut debug_pin: De
             speed_controller.set_active(active, active);
         }
 
+        let ref_state = {
+            let speed = speed.lock().unwrap();
+            vector![0.0, 0.0, MAX_SPEED * (*speed)]
+        };
+        let ref_input = ref_state_to_ref_input * ref_state;
+
         let state = vector![angle, ang_vel, motor_ang_vel];
 
-        let motor_accel = (-control_gain * state)[(0, 0)];
+        let motor_accel = (-control_gain * (state - ref_state) + ref_input)[(0, 0)];
         motor_ang_vel = (motor_ang_vel + motor_accel * dt).clamp(-MAX_MOTOR_ANG_VEL, MAX_MOTOR_ANG_VEL);
 
         let (left_ang_vel, right_ang_vel) = {
@@ -179,7 +189,7 @@ fn apply_turn(speed: f32, turn: f32, max_speed: f32) -> (f32, f32) {
     (speed + 0.5 * turn, speed - 0.5 * turn)
 }
 
-fn osc_thread(turn: Arc<Mutex<f32>>) {
+fn osc_thread(speed: Arc<Mutex<f32>>, turn: Arc<Mutex<f32>>) {
     // Create UDP socket for OSC
     let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, OSC_PORT)).unwrap();
 
@@ -190,20 +200,22 @@ fn osc_thread(turn: Arc<Mutex<f32>>) {
         if let Ok((_, packet)) = rosc::decoder::decode_udp(&buf[..size])
         {
             let mut turn = turn.lock().unwrap();
-            handle_osc_packet(&packet, &mut *turn);
+            let mut speed = speed.lock().unwrap();
+            handle_osc_packet(&packet, &mut *speed, &mut *turn);
         }
     }
 }
 
-fn handle_osc_packet(packet: &OscPacket, turn: &mut f32) {
+fn handle_osc_packet(packet: &OscPacket, speed: &mut f32, turn: &mut f32) {
     match packet {
-        OscPacket::Message(msg) => handle_osc_message(msg, turn),
-        OscPacket::Bundle(bundle) => bundle.content.iter().for_each(|p| handle_osc_packet(p, turn))
+        OscPacket::Message(msg) => handle_osc_message(msg, speed, turn),
+        OscPacket::Bundle(bundle) => bundle.content.iter().for_each(|p| handle_osc_packet(p, speed, turn))
     }
 }
 
-fn handle_osc_message(msg: &OscMessage, turn: &mut f32) {
+fn handle_osc_message(msg: &OscMessage, speed: &mut f32, turn: &mut f32) {
     match (msg.addr.as_str(), msg.args.as_slice()) {
+        ("/speed", [OscType::Float(value)]) => *speed = *value,
         ("/turn", [OscType::Float(value)]) => *turn = *value,
         _ => ()
     }
