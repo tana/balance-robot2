@@ -1,14 +1,18 @@
-use std::time::Duration;
+use std::{time::Duration, net::{UdpSocket, SocketAddrV4, Ipv4Addr}, sync::{Arc, Mutex}};
 use complementary_filter::ComplemtaryFilter;
 use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 use esp_idf_hal::{prelude::*, spi::{SpiDeviceDriver, Dma, SpiConfig}, gpio::{Gpio0, PinDriver}, i2c::{I2cDriver, self}};
-use esp_idf_svc::timer::EspTimerService;
+use esp_idf_svc::{timer::EspTimerService, wifi::EspWifi, eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
 use mpu6050::Mpu6886;
 use nalgebra::{vector, matrix};
+use rosc::{OscMessage, OscPacket, OscType};
 use shift_stepper::{ShiftStepper, SpeedController};
 
 mod shift_stepper;
 mod complementary_filter;
+
+const WIFI_SSID: &str = "balance-robot";
+const OSC_PORT: u16 = 12345;
 
 const CONTROL_PERIOD: Duration = Duration::from_millis(10);
 const STEPS_PER_ROTATION: f32 = 240.0;
@@ -56,6 +60,25 @@ fn main() {
     let mut speed_controller = SpeedController::new(
         steppers, &mut timer_service, 0.001
     ).unwrap();
+
+    // Initialize Wi-Fi in Soft AP mode
+    let sysloop = EspSystemEventLoop::take().unwrap();
+    let nvs = EspDefaultNvsPartition::take().unwrap();
+    let mut wifi = EspWifi::new(peripherals.modem, sysloop, Some(nvs)).unwrap();
+    wifi.set_configuration(&embedded_svc::wifi::Configuration::AccessPoint(embedded_svc::wifi::AccessPointConfiguration {
+        ssid: WIFI_SSID.into(),
+        channel: 1,
+        auth_method: embedded_svc::wifi::AuthMethod::None,  // No encryption because it was too heavy.
+        ..Default::default()
+    })).unwrap();
+    wifi.start().unwrap();
+    println!("IP: {}", wifi.ap_netif().get_ip_info().unwrap().ip);
+
+    // Shared variables for remote control
+    let turn = Arc::<Mutex<f32>>::new(Mutex::new(0.0));
+
+    // Handle OSC in another thread
+    let _osc_thread = std::thread::spawn(move || osc_thread(Arc::clone(&turn)));
 
     // Initialize complementary filter
     let mut filter = ComplemtaryFilter::new(CONTROL_PERIOD.as_secs_f32());
@@ -108,5 +131,36 @@ fn main() {
 
         std::thread::sleep(CONTROL_PERIOD - last_time.elapsed());
         last_time = std::time::Instant::now();
+    }
+}
+
+fn osc_thread(turn: Arc<Mutex<f32>>) {
+    // Create UDP socket for OSC
+    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, OSC_PORT)).unwrap();
+
+    let mut buf = vec![0; rosc::decoder::MTU];  // Use heap to avoid stack overflow
+
+    loop {
+        let (size, _) = socket.recv_from(&mut buf).unwrap();
+        if let Ok((_, packet)) = rosc::decoder::decode_udp(&buf[..size])
+        {
+            let mut turn = turn.lock().unwrap();
+            handle_osc_packet(&packet, &mut *turn);
+            println!("{}", turn);
+        }
+    }
+}
+
+fn handle_osc_packet(packet: &OscPacket, turn: &mut f32) {
+    match packet {
+        OscPacket::Message(msg) => handle_osc_message(msg, turn),
+        OscPacket::Bundle(bundle) => bundle.content.iter().for_each(|p| handle_osc_packet(p, turn))
+    }
+}
+
+fn handle_osc_message(msg: &OscMessage, turn: &mut f32) {
+    match (msg.addr.as_str(), msg.args.as_slice()) {
+        ("/turn", [OscType::Float(value)]) => *turn = *value,
+        _ => ()
     }
 }
