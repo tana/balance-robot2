@@ -1,7 +1,8 @@
 use std::{time::Duration, net::{UdpSocket, SocketAddrV4, Ipv4Addr}, sync::{Arc, Mutex}};
 use complementary_filter::ComplemtaryFilter;
+use embedded_hal::{digital::{InputPin, ToggleableOutputPin}, spi::{SpiDevice, SpiBusWrite}};
 use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
-use esp_idf_hal::{prelude::*, spi::{SpiDeviceDriver, Dma, SpiConfig}, gpio::{Gpio0, PinDriver}, i2c::{I2cDriver, self}};
+use esp_idf_hal::{prelude::*, spi::{SpiDeviceDriver, Dma, SpiConfig}, gpio::{Gpio0, PinDriver}, i2c::{I2cDriver, self}, task::thread::ThreadSpawnConfiguration, cpu::Core};
 use esp_idf_svc::{timer::EspTimerService, wifi::EspWifi, eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition, mdns::EspMdns};
 use mpu6050::Mpu6886;
 use nalgebra::{vector, matrix};
@@ -26,11 +27,10 @@ fn main() {
     esp_idf_sys::link_patches();
 
     let peripherals = Peripherals::take().unwrap();
-    let mut delay = esp_idf_hal::delay::FreeRtos;
-    
+
     let button = PinDriver::input(peripherals.pins.gpio39).unwrap();
 
-    let mut debug_pin = PinDriver::output(peripherals.pins.gpio33).unwrap();
+    let debug_pin = PinDriver::output(peripherals.pins.gpio33).unwrap();
 
     // Initialize I2C for IMU
     let i2c = I2cDriver::new(
@@ -39,10 +39,6 @@ fn main() {
         &i2c::config::Config::new().baudrate(400.kHz().into()).sda_enable_pullup(true).scl_enable_pullup(true)
     ).unwrap();
 
-    // Initialize IMU
-    let mut imu = Mpu6886::new(i2c);
-    imu.init(&mut delay).unwrap();
-
     // Initialize SPI for stepper driver
     let spi = SpiDeviceDriver::new_single(
         peripherals.spi2,
@@ -50,18 +46,7 @@ fn main() {
         Dma::Disabled, Some(peripherals.pins.gpio23),
         &SpiConfig::new().baudrate(100.kHz().into()).data_mode(embedded_hal::spi::MODE_0)
     ).unwrap();
-
-    // Initialize stepper driver
-    let mut steppers = ShiftStepper::new(spi);
-    steppers.init().unwrap();
-    steppers.set_active(false, false).unwrap();
-
-    // Initialize speed control for steppers
-    let mut timer_service = EspTimerService::new().unwrap();
-    let mut speed_controller = SpeedController::new(
-        steppers, &mut timer_service, 0.001
-    ).unwrap();
-
+    
     // Initialize Wi-Fi in Soft AP mode
     let sysloop = EspSystemEventLoop::take().unwrap();
     let nvs = EspDefaultNvsPartition::take().unwrap();
@@ -84,10 +69,48 @@ fn main() {
     let turn = Arc::<Mutex<f32>>::new(Mutex::new(0.0));
 
     // Handle OSC in another thread
-    let _osc_thread = {
+    let _osc_thread_handle = {
         let turn = Arc::clone(&turn);
         std::thread::spawn(move || osc_thread(turn))
     };
+
+    // Run control loop in another core with higiher priority
+    let spawn_config = ThreadSpawnConfiguration {
+        name: Some("control".as_bytes()),
+        priority: 2,
+        pin_to_core: Some(Core::Core1),
+        ..Default::default()
+    };
+    spawn_config.set().unwrap();
+    let control_thread_handle = std::thread::spawn(
+        move || control_thread(button, debug_pin, i2c, spi, turn)
+    );
+
+    control_thread_handle.join().unwrap();
+}
+
+fn control_thread<ButtonPin, DebugPin, Spi>(button: ButtonPin, mut debug_pin: DebugPin, i2c: I2cDriver, spi: Spi, turn: Arc<Mutex<f32>>) where
+    ButtonPin: InputPin,
+    DebugPin: ToggleableOutputPin,
+    Spi: SpiDevice + Send + 'static,
+    Spi::Bus: SpiBusWrite
+{
+    let mut delay = esp_idf_hal::delay::FreeRtos;
+
+    // Initialize IMU
+    let mut imu = Mpu6886::new(i2c);
+    imu.init(&mut delay).unwrap();
+
+    // Initialize stepper driver
+    let mut steppers = ShiftStepper::new(spi);
+    steppers.init().unwrap();
+    steppers.set_active(false, false).unwrap();
+
+    // Initialize speed control for steppers
+    let mut timer_service = EspTimerService::new().unwrap();
+    let mut speed_controller = SpeedController::new(
+        steppers, &mut timer_service, 0.001
+    ).unwrap();
 
     // Initialize complementary filter
     let mut filter = ComplemtaryFilter::new(CONTROL_PERIOD.as_secs_f32());
@@ -105,7 +128,7 @@ fn main() {
     let mut last_time = std::time::Instant::now();
 
     loop {
-        let pressed = button.is_low();
+        let pressed = button.is_low().unwrap();
         if !prev_pressed && pressed {   // Detect button press
             active = !active;
             speed_controller.set_active(active, active);
