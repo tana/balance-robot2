@@ -2,7 +2,7 @@ use std::{time::Duration, net::{UdpSocket, SocketAddrV4, Ipv4Addr}, sync::{Arc, 
 use complementary_filter::ComplemtaryFilter;
 use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 use esp_idf_hal::{prelude::*, spi::{SpiDeviceDriver, Dma, SpiConfig}, gpio::{Gpio0, PinDriver}, i2c::{I2cDriver, self}};
-use esp_idf_svc::{timer::EspTimerService, wifi::EspWifi, eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
+use esp_idf_svc::{timer::EspTimerService, wifi::EspWifi, eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition, mdns::EspMdns};
 use mpu6050::Mpu6886;
 use nalgebra::{vector, matrix};
 use rosc::{OscMessage, OscPacket, OscType};
@@ -73,6 +73,11 @@ fn main() {
     })).unwrap();
     wifi.start().unwrap();
     println!("IP: {}", wifi.ap_netif().get_ip_info().unwrap().ip);
+
+    // Advertise this device as 'balance-robot.local' using mDNS
+    let mut mdns = EspMdns::take().unwrap();
+    mdns.set_hostname("balance-robot").unwrap();
+    mdns.set_instance_name("Self-Balancing Robot").unwrap();
 
     // Shared variables for remote control
     let turn = Arc::<Mutex<f32>>::new(Mutex::new(0.0));
