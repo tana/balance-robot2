@@ -18,6 +18,7 @@ const CONTROL_PERIOD: Duration = Duration::from_millis(10);
 const STEPS_PER_ROTATION: f32 = 240.0;
 const MAX_MOTOR_ANG_VEL: f32 = 4.0 * core::f32::consts::PI;
 const FALL_ANGLE: f32 = 45.0 * core::f32::consts::PI / 180.0;
+const TURN_RATE: f32 = 120.0 * core::f32::consts::PI / 180.0;
 
 fn main() {
     // Temporary. Will disappear once ESP-IDF 4.4 is released, but for now it is necessary to call this function once,
@@ -83,7 +84,10 @@ fn main() {
     let turn = Arc::<Mutex<f32>>::new(Mutex::new(0.0));
 
     // Handle OSC in another thread
-    let _osc_thread = std::thread::spawn(move || osc_thread(Arc::clone(&turn)));
+    let _osc_thread = {
+        let turn = Arc::clone(&turn);
+        std::thread::spawn(move || osc_thread(turn))
+    };
 
     // Initialize complementary filter
     let mut filter = ComplemtaryFilter::new(CONTROL_PERIOD.as_secs_f32());
@@ -129,14 +133,27 @@ fn main() {
         let motor_accel = (-control_gain * state)[(0, 0)];
         motor_ang_vel = (motor_ang_vel + motor_accel * dt).clamp(-MAX_MOTOR_ANG_VEL, MAX_MOTOR_ANG_VEL);
 
-        let steps_per_sec = STEPS_PER_ROTATION * motor_ang_vel / (2.0 * core::f32::consts::PI);
-        speed_controller.set_speed(-steps_per_sec, steps_per_sec);
+        let (left_ang_vel, right_ang_vel) = {
+            let turn = turn.lock().unwrap();
+            apply_turn(motor_ang_vel, TURN_RATE * (*turn), MAX_MOTOR_ANG_VEL)
+        };
+
+        let left_steps_per_sec = -STEPS_PER_ROTATION * left_ang_vel / (2.0 * core::f32::consts::PI);    // Two motors are mounted in oppsite direction
+        let right_steps_per_sec = STEPS_PER_ROTATION * right_ang_vel / (2.0 * core::f32::consts::PI);
+        speed_controller.set_speed(left_steps_per_sec, right_steps_per_sec);
 
         debug_pin.toggle().unwrap();
 
         std::thread::sleep(CONTROL_PERIOD - last_time.elapsed());
         last_time = std::time::Instant::now();
     }
+}
+
+// Mix speed (average angular velocity of two motors) and turn (difference of angular velocities)
+fn apply_turn(speed: f32, turn: f32, max_speed: f32) -> (f32, f32) {
+    let headroom = max_speed - speed.abs();
+    let turn = turn.clamp(-2.0 * headroom, 2.0 * headroom);
+    (speed + turn, speed - turn)
 }
 
 fn osc_thread(turn: Arc<Mutex<f32>>) {
@@ -151,7 +168,6 @@ fn osc_thread(turn: Arc<Mutex<f32>>) {
         {
             let mut turn = turn.lock().unwrap();
             handle_osc_packet(&packet, &mut *turn);
-            println!("{}", turn);
         }
     }
 }
