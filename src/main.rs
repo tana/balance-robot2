@@ -153,7 +153,7 @@ fn main() {
 fn apply_turn(speed: f32, turn: f32, max_speed: f32) -> (f32, f32) {
     let headroom = max_speed - speed.abs();
     let turn = turn.clamp(-2.0 * headroom, 2.0 * headroom);
-    (speed + turn, speed - turn)
+    (speed + 0.5 * turn, speed - 0.5 * turn)
 }
 
 fn osc_thread(turn: Arc<Mutex<f32>>) {
